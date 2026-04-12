@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Lead Autofill</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>Lead Autofill</h1>
+
+    <div class="row">
+      <button id="collectBtn" class="primary">Collect Data</button>
+    </div>
+
+    <fieldset>
+      <legend>Lead data</legend>
+      <label>First name <input id="firstName" type="text" /></label>
+      <label>Last name  <input id="lastName"  type="text" /></label>
+      <label>Email      <input id="email"     type="text" /></label>
+      <label>Phone      <input id="phone"     type="text" /></label>
+      <label>DOB        <input id="dob"       type="text" placeholder="MM/DD/YYYY" /></label>
+      <label>Address    <input id="address"   type="text" /></label>
+      <label>City       <input id="city"      type="text" /></label>
+      <label>State      <input id="state"     type="text" /></label>
+      <label>ZIP        <input id="zip"       type="text" /></label>
+    </fieldset>
+
+    <div class="row two">
+      <button id="fillProgressiveBtn">Fill Progressive</button>
+      <button id="fillForemostBtn">Fill Foremost</button>
+    </div>
+    <div class="row">
+      <button id="fillAutoBtn" class="primary">Fill Current Page (auto)</button>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

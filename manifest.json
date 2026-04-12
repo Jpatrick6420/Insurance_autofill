@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Insurance Lead Autofill",
+  "version": "1.0.0",
+  "description": "Collects lead data from the dialer callback script and fills Progressive (For Agents Only) and Foremost STAR quote forms using simulated typing.",
+  "permissions": ["storage", "scripting", "activeTab"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Insurance Lead Autofill"
+  }
+}
