@@ -142,81 +142,140 @@
     }
   }
 
-  // Address: scan lines for a "City, ST 12345" (or "City ST 12345") line,
-  // then walk backward for the nearest line that starts with a street number.
+  // Address parsing.  Several layouts we have to support:
+  //   (a) Multi-line:    "123 Main St\nSpringfield, IL 62704"
+  //   (b) Inline commas: "123 Main St, Springfield, IL 62704"
+  //   (c) Inline no-commas:        "123 Main St Springfield IL 62704"
+  //   (d) Utah-style grid no-commas:
+  //                      "5610 N 1400 W Saint George UT 84770"
   if (!data.address || !data.city || !data.state || !data.zip) {
-    const cityStateZipRe =
-      /^(.+?)[,\s]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$/;
-    for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(cityStateZipRe);
-      if (!m) continue;
-      const cityPart = m[1].replace(/,$/, "").trim();
-      // Require the city to be words (not itself starting with a street #).
-      if (!/^[A-Za-z][A-Za-z.\s'-]*$/.test(cityPart)) continue;
-      if (!data.city) data.city = cityPart;
-      if (!data.state) data.state = m[2];
-      if (!data.zip) data.zip = m[3];
+    // Known street-type suffixes (end of the street portion of an address).
+    const STREET_SUFFIX =
+      "(?:St|Street|Ave|Avenue|Blvd|Boulevard|Rd|Road|Dr|Drive|Ln|Lane|" +
+      "Way|Wy|Ct|Court|Pl|Place|Ter|Terrace|Cir|Circle|Pkwy|Parkway|" +
+      "Trl|Trail|Hwy|Highway|Route|Rte|Loop|Row|Run|Xing|Crossing|" +
+      "Sq|Square|Plz|Plaza|Aly|Alley|Expy|Expressway)";
+    const DIR = "(?:N|S|E|W|NE|NW|SE|SW)";
 
-      if (!data.address) {
-        // Prefer the previous line if it looks like a street address.
-        for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
-          if (/^\d+\s+\S/.test(lines[j]) && !cityStateZipRe.test(lines[j])) {
-            data.address = lines[j].replace(/[,\s]+$/, "");
-            break;
+    // Split a "street+city" string into { street, city } using suffix/grid
+    // heuristics.  Returns null if we can't confidently split.
+    function splitStreetCity(text) {
+      text = text.replace(/\s+/g, " ").trim().replace(/,+/g, "");
+      // 1. Street that ends in a known suffix (optionally followed by a
+      //    directional).  City is everything after.
+      let re = new RegExp(
+        "^(\\d+\\s+.*?\\b" + STREET_SUFFIX + "\\.?(?:\\s+" + DIR + "\\b)?)\\s+(.+)$",
+        "i"
+      );
+      let m = text.match(re);
+      if (m) return { street: m[1].trim(), city: m[2].trim() };
+      // 2. Utah-style grid: "5610 N 1400 W <city>" — street ends with a
+      //    directional letter following a number.
+      re = new RegExp(
+        "^(\\d+\\s+" + DIR + "\\s+\\d+\\s+" + DIR + ")\\s+(.+)$",
+        "i"
+      );
+      m = text.match(re);
+      if (m) return { street: m[1].trim(), city: m[2].trim() };
+      // 3. Simpler grid: "123 N 456 <city>" or "123 <Dir> <City>".
+      re = new RegExp("^(\\d+\\s+" + DIR + "\\s+\\d+)\\s+(.+)$", "i");
+      m = text.match(re);
+      if (m) return { street: m[1].trim(), city: m[2].trim() };
+      // 4. Last-ditch: take "<number> <1-3 tokens>" as street, rest as city.
+      m = text.match(/^(\d+\s+\S+(?:\s+\S+){0,2})\s+(.+)$/);
+      if (m) return { street: m[1].trim(), city: m[2].trim() };
+      return null;
+    }
+
+    // Find a line (or the whole pageText) containing "ST 12345" and use it.
+    const STATE_ZIP = /\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
+    const candidates = lines.slice();
+    // Also consider the raw pageText so we catch addresses not line-broken
+    // the way we expect.
+    if (!candidates.includes(pageText)) candidates.push(pageText);
+
+    for (const line of candidates) {
+      const szMatch = line.match(STATE_ZIP);
+      if (!szMatch) continue;
+      // Everything before "ST ZIP" on this same line is street+city.
+      const before = line.slice(0, szMatch.index).replace(/[,\s]+$/, "").trim();
+      if (!before) continue;
+
+      // Case (a): "before" is just "City" (street is on the previous line).
+      if (/^[A-Za-z][A-Za-z.\s'-]*$/.test(before)) {
+        if (!data.city) data.city = before.replace(/,$/, "").trim();
+        if (!data.state) data.state = szMatch[1];
+        if (!data.zip) data.zip = szMatch[2];
+        if (!data.address) {
+          const idx = lines.indexOf(line);
+          for (let j = idx - 1; j >= 0 && j >= idx - 3; j--) {
+            if (/^\d+\s+\S/.test(lines[j])) {
+              data.address = lines[j].replace(/[,\s]+$/, "");
+              break;
+            }
           }
         }
-        // Or, it may be on the same line before the city, e.g.
-        // "123 Main St Springfield IL 62704".
-        if (!data.address) {
-          const inline = lines[i].match(
-            /^(\d+\s+[^,]+?)[,\s]+([A-Z][A-Za-z.\s'-]+?)[,\s]+([A-Z]{2})\s+(\d{5})/
-          );
-          if (inline) {
-            data.address = inline[1].trim();
-            if (!data.city || data.city === cityPart) data.city = inline[2].trim();
-          }
+        break;
+      }
+
+      // Case (b/c/d): "before" contains both street and city.
+      if (/^\d/.test(before)) {
+        const split = splitStreetCity(before);
+        if (split) {
+          if (!data.address) data.address = split.street;
+          if (!data.city) data.city = split.city;
+          if (!data.state) data.state = szMatch[1];
+          if (!data.zip) data.zip = szMatch[2];
+          break;
         }
       }
-      break;
     }
   }
 
-  // Name: prefer an explicit "Name:" label in text; fall back to headings
-  // with a stricter blacklist so things like "Direct Mail" don't match.
+  // Title-case a name like "ron vos" -> "Ron Vos".
+  function titleCase(s) {
+    return s
+      .toLowerCase()
+      .replace(/\b([a-z])([a-z'\-]*)/g, (_, a, b) => a.toUpperCase() + b);
+  }
+
+  // Accept a raw "first last [middle]" string and write it into data.
+  // Returns true if accepted.
+  function acceptName(raw) {
+    if (!raw) return false;
+    const txt = raw.replace(/\s+/g, " ").trim();
+    if (txt.length > 50) return false;
+    if (NOT_A_NAME.test(txt)) return false;
+    // 2-4 alphabetic tokens (letters, apostrophes, hyphens, periods).
+    if (!/^[A-Za-z][A-Za-z'\-.]*(\s+[A-Za-z][A-Za-z'\-.]*){1,3}$/.test(txt)) {
+      return false;
+    }
+    const parts = titleCase(txt).split(/\s+/);
+    if (!data.firstName) data.firstName = parts[0];
+    if (!data.lastName) data.lastName = parts.slice(1).join(" ");
+    return true;
+  }
+
+  // 1. Prefer an explicit "Name:" label in page text.
   if (!data.firstName || !data.lastName) {
     const nameVal = valueForLabel(
-      /\b(lead\s*name|customer\s*name|client\s*name|full\s*name|insured|name)\b/i
+      /\b(lead\s*name|customer\s*name|client\s*name|full\s*name|insured|contact(?:\s*name)?|name)\b/i
     );
-    if (nameVal && !NOT_A_NAME.test(nameVal)) {
-      const parts = nameVal.replace(/\s+/g, " ").trim().split(/\s+/);
-      if (
-        parts.length >= 2 &&
-        parts.length <= 4 &&
-        parts.every((p) => /^[A-Za-z][A-Za-z'\-.]*$/.test(p))
-      ) {
-        if (!data.firstName) data.firstName = parts[0];
-        if (!data.lastName) data.lastName = parts.slice(1).join(" ");
-      }
-    }
+    if (nameVal) acceptName(nameVal);
   }
 
+  // 2. Fall back to prominent headings / likely name elements.  Case-
+  //    insensitive so lowercase names like "ron vos" still match.
   if (!data.firstName || !data.lastName) {
     const candidates = [];
     document
-      .querySelectorAll("h1, h2, h3, h4, .lead-name, .name, .lead-header")
+      .querySelectorAll(
+        "h1, h2, h3, h4, .lead-name, .name, .lead-header, " +
+        ".contact-name, .customer-name, .client-name"
+      )
       .forEach((el) => candidates.push((el.textContent || "").trim()));
     for (const raw of candidates) {
-      const txt = raw.replace(/\s+/g, " ").trim();
-      if (
-        /^[A-Z][A-Za-z'\-]+(\s+[A-Z][A-Za-z'\-]+){1,2}$/.test(txt) &&
-        txt.length < 50 &&
-        !NOT_A_NAME.test(txt)
-      ) {
-        const parts = txt.split(/\s+/);
-        if (!data.firstName) data.firstName = parts[0];
-        if (!data.lastName) data.lastName = parts.slice(1).join(" ");
-        break;
-      }
+      if (acceptName(raw)) break;
     }
   }
 
