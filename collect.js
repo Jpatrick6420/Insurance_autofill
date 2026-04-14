@@ -80,6 +80,33 @@
 
   const pageText = document.body ? document.body.innerText : "";
 
+  // Split into trimmed non-empty lines so we can match labels line-by-line.
+  const lines = pageText
+    .split(/\r?\n+/)
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  // Words/phrases that look like labels on a dialer script page but are NOT a
+  // customer name, address, etc. Used to reject bad matches.
+  const NOT_A_NAME =
+    /\b(direct\s*mail|new\s*lead|lead|campaign|script|call(?:er|back)?|dial(?:er)?|customer|caller|prospect|source|status|type|inbound|outbound|note|agent|representative|rep|account|mail|phone|email|address|city|state|zip|dob|birth|born)\b/i;
+
+  // Find the first value associated with a label, scanning lines.  The value
+  // may be on the same line ("DOB: 01/02/1980") or the next line.
+  function valueForLabel(labelRe) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const m = line.match(labelRe);
+      if (!m) continue;
+      // Inline: strip the label + any separator and return the remainder.
+      const after = line.slice(m.index + m[0].length).replace(/^[\s:\-–—]+/, "").trim();
+      if (after) return after;
+      // Otherwise the value is likely on the next non-empty line.
+      if (i + 1 < lines.length) return lines[i + 1];
+    }
+    return null;
+  }
+
   if (!data.email) {
     const m = pageText.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
     if (m) data.email = m[0];
@@ -93,39 +120,97 @@
     if (m) data.phone = m[1] + m[2] + m[3];
   }
 
+  // DOB: require a birth/DOB label nearby so we don't grab a random date
+  // (call date, appointment, lead-created, etc.).
   if (!data.dob) {
-    const m = pageText.match(/\b(\d{1,2}\/\d{1,2}\/\d{4})\b/);
-    if (m) data.dob = m[1];
-  }
-
-  // Try to find an address string: "### street ... City ST 12345"
-  if (!data.address || !data.city || !data.state || !data.zip) {
-    const addrRe =
-      /(\d+\s+[NSEW]?\.?\s*[\w.\s-]+?)\s+([A-Z][A-Za-z.\s-]+?),?\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?/;
-    const m = pageText.match(addrRe);
+    const dateRe = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})/;
+    const dobVal = valueForLabel(/\b(date\s*of\s*birth|d\.?o\.?b\.?|birth\s*date|birthday|born)\b/i);
+    let m = dobVal && dobVal.match(dateRe);
+    if (!m) {
+      // Last resort: find a date whose line mentions birth/dob explicitly.
+      for (const line of lines) {
+        if (/\b(dob|birth|born)\b/i.test(line)) {
+          const mm = line.match(dateRe);
+          if (mm) { m = mm; break; }
+        }
+      }
+    }
     if (m) {
-      if (!data.address) data.address = m[1].trim();
-      if (!data.city) data.city = m[2].trim();
-      if (!data.state) data.state = m[3].trim();
-      if (!data.zip) data.zip = m[4].trim();
+      let [, mo, dy, yr] = m;
+      if (yr.length === 2) yr = (parseInt(yr, 10) > 30 ? "19" : "20") + yr;
+      data.dob = mo.padStart(2, "0") + "/" + dy.padStart(2, "0") + "/" + yr;
     }
   }
 
-  // Try to find a "First Last" name. Prefer headings, then labeled spans.
+  // Address: scan lines for a "City, ST 12345" (or "City ST 12345") line,
+  // then walk backward for the nearest line that starts with a street number.
+  if (!data.address || !data.city || !data.state || !data.zip) {
+    const cityStateZipRe =
+      /^(.+?)[,\s]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$/;
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(cityStateZipRe);
+      if (!m) continue;
+      const cityPart = m[1].replace(/,$/, "").trim();
+      // Require the city to be words (not itself starting with a street #).
+      if (!/^[A-Za-z][A-Za-z.\s'-]*$/.test(cityPart)) continue;
+      if (!data.city) data.city = cityPart;
+      if (!data.state) data.state = m[2];
+      if (!data.zip) data.zip = m[3];
+
+      if (!data.address) {
+        // Prefer the previous line if it looks like a street address.
+        for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
+          if (/^\d+\s+\S/.test(lines[j]) && !cityStateZipRe.test(lines[j])) {
+            data.address = lines[j].replace(/[,\s]+$/, "");
+            break;
+          }
+        }
+        // Or, it may be on the same line before the city, e.g.
+        // "123 Main St Springfield IL 62704".
+        if (!data.address) {
+          const inline = lines[i].match(
+            /^(\d+\s+[^,]+?)[,\s]+([A-Z][A-Za-z.\s'-]+?)[,\s]+([A-Z]{2})\s+(\d{5})/
+          );
+          if (inline) {
+            data.address = inline[1].trim();
+            if (!data.city || data.city === cityPart) data.city = inline[2].trim();
+          }
+        }
+      }
+      break;
+    }
+  }
+
+  // Name: prefer an explicit "Name:" label in text; fall back to headings
+  // with a stricter blacklist so things like "Direct Mail" don't match.
+  if (!data.firstName || !data.lastName) {
+    const nameVal = valueForLabel(
+      /\b(lead\s*name|customer\s*name|client\s*name|full\s*name|insured|name)\b/i
+    );
+    if (nameVal && !NOT_A_NAME.test(nameVal)) {
+      const parts = nameVal.replace(/\s+/g, " ").trim().split(/\s+/);
+      if (
+        parts.length >= 2 &&
+        parts.length <= 4 &&
+        parts.every((p) => /^[A-Za-z][A-Za-z'\-.]*$/.test(p))
+      ) {
+        if (!data.firstName) data.firstName = parts[0];
+        if (!data.lastName) data.lastName = parts.slice(1).join(" ");
+      }
+    }
+  }
+
   if (!data.firstName || !data.lastName) {
     const candidates = [];
     document
       .querySelectorAll("h1, h2, h3, h4, .lead-name, .name, .lead-header")
       .forEach((el) => candidates.push((el.textContent || "").trim()));
     for (const raw of candidates) {
-      // strip surrounding punctuation
       const txt = raw.replace(/\s+/g, " ").trim();
-      // name-ish: 2-3 words, only letters/apostrophes/hyphens/spaces,
-      // not something obviously a page label.
       if (
-        /^[A-Za-z][A-Za-z'\-]+(\s+[A-Za-z][A-Za-z'\-]+){1,2}$/.test(txt) &&
+        /^[A-Z][A-Za-z'\-]+(\s+[A-Z][A-Za-z'\-]+){1,2}$/.test(txt) &&
         txt.length < 50 &&
-        !/call|script|lead|note|dial|campaign/i.test(txt)
+        !NOT_A_NAME.test(txt)
       ) {
         const parts = txt.split(/\s+/);
         if (!data.firstName) data.firstName = parts[0];
