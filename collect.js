@@ -18,7 +18,7 @@
 
   // Find an input whose associated label / name / id / placeholder matches.
   function findInputByLabel(pattern) {
-    // <label for="..."> ... </label>
+    // 1. <label for="..."> ... </label>
     const labels = document.querySelectorAll("label");
     for (const label of labels) {
       if (!pattern.test(label.textContent || "")) continue;
@@ -35,14 +35,35 @@
         if (near) return near;
       }
     }
-    // By attributes
-    const inputs = document.querySelectorAll("input, textarea");
+    // 2. By attributes (name/id/placeholder/aria-label/etc.).
+    const inputs = document.querySelectorAll("input, textarea, select");
     for (const el of inputs) {
       const hay = [
         el.name, el.id, el.placeholder, el.getAttribute("aria-label"),
         el.getAttribute("data-label"), el.getAttribute("title"),
+        el.getAttribute("ng-model"), el.getAttribute("ng-reflect-name"),
       ].filter(Boolean).join(" ");
       if (pattern.test(hay)) return el;
+    }
+    // 3. DOM-proximity fallback.  Many Angular / dynamic forms render each
+    //    field via an ng-repeat where the input has no identifying
+    //    attributes at all, and the label is a sibling element.  Walk up a
+    //    few ancestor levels from each input and check if the ancestor's
+    //    visible text (excluding other form controls) matches the label
+    //    pattern.  Inputs' own values are NOT part of innerText, so the
+    //    ancestor text is effectively just the label.
+    for (const el of inputs) {
+      if (el.type === "hidden" || el.disabled) continue;
+      let p = el.parentElement;
+      for (let depth = 0; depth < 5 && p; depth++, p = p.parentElement) {
+        // Stop if we've walked up past a form boundary into something huge.
+        const text = (p.innerText || p.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (!text) continue;
+        if (text.length > 80) break; // too broad, we're past the row
+        if (pattern.test(text)) return el;
+      }
     }
     return null;
   }
