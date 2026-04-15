@@ -1,5 +1,7 @@
 /* Popup controller: collect lead data from current tab, store it, and
-   inject the filler scripts into Progressive / Foremost pages. */
+   inject the filler scripts into Progressive pages.  Collect Data also
+   opens Zillow and Google Maps tabs for the manually-entered address
+   (or, if blank, the address parsed from the page). */
 
 const FIELDS = [
   "firstName", "lastName", "email", "phone",
@@ -7,6 +9,12 @@ const FIELDS = [
 ];
 
 const STORAGE_KEY = "leadData";
+const MANUAL_ADDRESS_KEY = "manualAddress";
+
+const ZILLOW_URL = "https://www.zillow.com/homes/";
+const ZILLOW_MATCH = "*://*.zillow.com/*";
+const GMAPS_URL = "https://www.google.com/maps/place/";
+const GMAPS_MATCH = "*://*.google.com/maps/*";
 
 function $(id) { return document.getElementById(id); }
 
@@ -27,12 +35,53 @@ function writeForm(data) {
 }
 
 async function loadStored() {
-  const { [STORAGE_KEY]: data } = await chrome.storage.local.get(STORAGE_KEY);
-  if (data) writeForm(data);
+  const stored = await chrome.storage.local.get([STORAGE_KEY, MANUAL_ADDRESS_KEY]);
+  if (stored[STORAGE_KEY]) writeForm(stored[STORAGE_KEY]);
+  if (stored[MANUAL_ADDRESS_KEY]) $("manualAddress").value = stored[MANUAL_ADDRESS_KEY];
 }
 
 async function saveForm() {
   await chrome.storage.local.set({ [STORAGE_KEY]: readForm() });
+}
+
+async function saveManualAddress() {
+  await chrome.storage.local.set({
+    [MANUAL_ADDRESS_KEY]: $("manualAddress").value.trim(),
+  });
+}
+
+/* Build a single-line "street, city, state zip" string from the parsed
+   lead-data form.  Returns "" if there isn't enough data. */
+function parsedAddressString() {
+  const d = readForm();
+  if (!d.address) return "";
+  const parts = [d.address];
+  const cityLine = [d.city, d.state].filter(Boolean).join(" ");
+  const tail = [cityLine, d.zip].filter(Boolean).join(" ");
+  if (tail) parts.push(tail);
+  return parts.join(", ");
+}
+
+/* Open a URL in an existing tab matching `matchPattern` if one exists,
+   otherwise create a new background tab. */
+async function openOrUpdateTab(url, matchPattern) {
+  try {
+    const existing = await chrome.tabs.query({ url: matchPattern });
+    if (existing && existing.length) {
+      await chrome.tabs.update(existing[0].id, { url, active: false });
+      return;
+    }
+  } catch (_) {
+    /* fall through to create */
+  }
+  await chrome.tabs.create({ url, active: false });
+}
+
+/* Open Zillow + Google Maps for the given address. */
+async function openLocationTabs(address) {
+  const q = encodeURIComponent(address);
+  await openOrUpdateTab(ZILLOW_URL + q, ZILLOW_MATCH);
+  await openOrUpdateTab(GMAPS_URL + q, GMAPS_MATCH);
 }
 
 async function getActiveTab() {
@@ -55,14 +104,31 @@ async function doCollect() {
   try {
     const tab = await getActiveTab();
     const data = await runInTab(tab, "collect.js");
-    if (!data) {
-      setStatus("No data found on page.", "err");
-      return;
+    if (data) {
+      const merged = { ...readForm(), ...cleanEmpty(data) };
+      writeForm(merged);
+      await saveForm();
     }
-    const merged = { ...readForm(), ...cleanEmpty(data) };
-    writeForm(merged);
-    await saveForm();
-    setStatus("Collected. Review / edit then click Fill.", "ok");
+
+    // Address lookup: manual override wins, otherwise use whatever we
+    // just parsed (or had already).
+    const manual = $("manualAddress").value.trim();
+    const addressForLookup = manual || parsedAddressString();
+    if (addressForLookup) {
+      await openLocationTabs(addressForLookup);
+      if (manual) $("manualAddress").value = "";
+      await saveManualAddress();
+      setStatus(
+        (data ? "Collected. " : "") +
+          "Opened Zillow + Maps for: " +
+          addressForLookup,
+        "ok"
+      );
+    } else if (data) {
+      setStatus("Collected. Review / edit then click Fill.", "ok");
+    } else {
+      setStatus("No data found on page.", "err");
+    }
   } catch (e) {
     setStatus("Collect failed: " + e.message, "err");
   }
@@ -85,9 +151,7 @@ async function doFill(which) {
     // Filler reads the saved lead data from chrome.storage.local, so we just
     // inject it and let it decide which form layout to handle.
     const siteFile =
-      which === "progressive" ? "fill-progressive.js" :
-      which === "foremost"    ? "fill-foremost.js" :
-                                "fill-auto.js";
+      which === "progressive" ? "fill-progressive.js" : "fill-auto.js";
     const result = await runInTab(tab, ["fill-common.js", siteFile]);
     if (result && result.ok) {
       setStatus("Filled " + (result.filled || 0) + " field(s).", "ok");
@@ -108,8 +172,9 @@ document.addEventListener("DOMContentLoaded", () => {
     $(f).addEventListener("change", saveForm);
     $(f).addEventListener("blur", saveForm);
   }
+  $("manualAddress").addEventListener("change", saveManualAddress);
+  $("manualAddress").addEventListener("blur", saveManualAddress);
   $("collectBtn").addEventListener("click", doCollect);
   $("fillProgressiveBtn").addEventListener("click", () => doFill("progressive"));
-  $("fillForemostBtn").addEventListener("click", () => doFill("foremost"));
   $("fillAutoBtn").addEventListener("click", () => doFill("auto"));
 });

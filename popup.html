@@ -9,6 +9,13 @@
     <h1>Lead Autofill</h1>
 
     <div class="row">
+      <label class="stacked">
+        Manual address (overrides parsed address for lookup)
+        <input id="manualAddress" type="text" placeholder="123 Main St, City ST 12345" />
+      </label>
+    </div>
+
+    <div class="row">
       <button id="collectBtn" class="primary">Collect Data</button>
     </div>
 
@@ -25,9 +32,8 @@
       <label>ZIP        <input id="zip"       type="text" /></label>
     </fieldset>
 
-    <div class="row two">
+    <div class="row">
       <button id="fillProgressiveBtn">Fill Progressive</button>
-      <button id="fillForemostBtn">Fill Foremost</button>
     </div>
     <div class="row">
       <button id="fillAutoBtn" class="primary">Fill Current Page (auto)</button>
