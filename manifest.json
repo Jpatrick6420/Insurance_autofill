@@ -1,9 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Insurance Lead Autofill",
-  "version": "1.0.0",
-  "description": "Collects lead data from the dialer callback script and fills Progressive (For Agents Only) and Foremost STAR quote forms using simulated typing.",
-  "permissions": ["storage", "scripting", "activeTab"],
+  "version": "1.1.0",
+  "description": "Collects lead data from the dialer callback script, opens Zillow and Google Maps for the address, and fills Progressive (For Agents Only) quote forms using simulated typing.",
+  "permissions": ["storage", "scripting", "activeTab", "tabs"],
+  "host_permissions": [
+    "*://*.zillow.com/*",
+    "*://*.google.com/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Insurance Lead Autofill"

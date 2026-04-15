@@ -41,28 +41,41 @@
       const hay = [
         el.name, el.id, el.placeholder, el.getAttribute("aria-label"),
         el.getAttribute("data-label"), el.getAttribute("title"),
-        el.getAttribute("ng-model"), el.getAttribute("ng-reflect-name"),
+        el.getAttribute("ng-reflect-name"),
       ].filter(Boolean).join(" ");
       if (pattern.test(hay)) return el;
     }
-    // 3. DOM-proximity fallback.  Many Angular / dynamic forms render each
-    //    field via an ng-repeat where the input has no identifying
-    //    attributes at all, and the label is a sibling element.  Walk up a
-    //    few ancestor levels from each input and check if the ancestor's
-    //    visible text (excluding other form controls) matches the label
-    //    pattern.  Inputs' own values are NOT part of innerText, so the
-    //    ancestor text is effectively just the label.
+    // 3. DOM-proximity fallback for dynamic forms (Angular ng-repeat,
+    //    etc.) where the input has no identifying attributes and the
+    //    label is a sibling element.  Walk up from each input and, at
+    //    each ancestor level, check "label-like" children — direct text
+    //    nodes and small child elements that don't themselves contain
+    //    form controls.  Stop walking up once we hit an ancestor that
+    //    contains more than one form control (we've left the row).
     for (const el of inputs) {
       if (el.type === "hidden" || el.disabled) continue;
       let p = el.parentElement;
       for (let depth = 0; depth < 5 && p; depth++, p = p.parentElement) {
-        // Stop if we've walked up past a form boundary into something huge.
-        const text = (p.innerText || p.textContent || "")
-          .replace(/\s+/g, " ")
-          .trim();
-        if (!text) continue;
-        if (text.length > 80) break; // too broad, we're past the row
-        if (pattern.test(text)) return el;
+        const controls = p.querySelectorAll(
+          "input:not([type=hidden]), textarea, select"
+        );
+        if (controls.length > 1) break; // past the row
+        for (const child of p.childNodes) {
+          let txt = "";
+          if (child.nodeType === 3 /* text */) {
+            txt = child.textContent || "";
+          } else if (
+            child.nodeType === 1 /* element */ &&
+            child !== el &&
+            !child.contains(el) &&
+            !child.querySelector("input, textarea, select")
+          ) {
+            txt = child.textContent || "";
+          }
+          txt = txt.replace(/\s+/g, " ").trim();
+          if (!txt || txt.length > 40) continue;
+          if (pattern.test(txt)) return el;
+        }
       }
     }
     return null;
