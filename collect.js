@@ -141,15 +141,34 @@
     return null;
   }
 
+  // Helper: find all regex matches in text, return the one whose position
+  // is closest to `anchorIdx` (the lead name location).  Falls back to
+  // the first match when we have no anchor.
+  function closestMatch(re, text, anchorIdx) {
+    const all = [...text.matchAll(re)];
+    if (!all.length) return null;
+    if (anchorIdx < 0 || all.length === 1) return all[0];
+    all.sort(
+      (a, b) => Math.abs(a.index - anchorIdx) - Math.abs(b.index - anchorIdx)
+    );
+    return all[0];
+  }
+
+  const nameAnchor = (() => {
+    const n = [data.firstName, data.lastName].filter(Boolean).join(" ");
+    return n ? pageText.indexOf(n) : -1;
+  })();
+
   if (!data.email) {
-    const m = pageText.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+    const m = closestMatch(/[\w.+-]+@[\w-]+\.[\w.-]+/g, pageText, nameAnchor);
     if (m) data.email = m[0];
   }
 
   if (!data.phone) {
-    // 10 or 11 digit phone, allow separators
-    const m = pageText.match(
-      /(?:\+?1[\s.\-]?)?\(?(\d{3})\)?[\s.\-]?(\d{3})[\s.\-]?(\d{4})/
+    const m = closestMatch(
+      /(?:\+?1[\s.\-]?)?\(?(\d{3})\)?[\s.\-]?(\d{3})[\s.\-]?(\d{4})/g,
+      pageText,
+      nameAnchor,
     );
     if (m) data.phone = m[1] + m[2] + m[3];
   }
@@ -223,10 +242,30 @@
 
     // Find a line (or the whole pageText) containing "ST 12345" and use it.
     const STATE_ZIP = /\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
-    const candidates = lines.slice();
+    const candidates = lines.filter((l) => STATE_ZIP.test(l));
+
+    // The page may contain addresses for OTHER contacts (agent info,
+    // previous leads, etc.).  Prefer the one closest to the lead name
+    // we already found — on the lead card the name and address are
+    // adjacent, so proximity in the text is a reliable signal.
+    const nameStr = [data.firstName, data.lastName].filter(Boolean).join(" ");
+    if (nameStr && candidates.length > 1) {
+      const nameLower = nameStr.toLowerCase();
+      const nameLineIdx = lines.findIndex(
+        (l) => l.toLowerCase().includes(nameLower)
+      );
+      if (nameLineIdx >= 0) {
+        candidates.sort((a, b) => {
+          const aIdx = lines.indexOf(a);
+          const bIdx = lines.indexOf(b);
+          return Math.abs(aIdx - nameLineIdx) - Math.abs(bIdx - nameLineIdx);
+        });
+      }
+    }
+
     // Also consider the raw pageText so we catch addresses not line-broken
     // the way we expect.
-    if (!candidates.includes(pageText)) candidates.push(pageText);
+    if (!candidates.some((c) => c === pageText)) candidates.push(pageText);
 
     for (const line of candidates) {
       const szMatch = line.match(STATE_ZIP);
