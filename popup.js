@@ -125,8 +125,15 @@ async function runInTab(tab, files) {
 async function doCollect() {
   setStatus("Collecting…");
   try {
-    const tab = await getActiveTab();
-    const data = await runInTab(tab, "collect.js");
+    // Try to collect data from the page — this can fail on pages where
+    // the extension can't inject scripts, so don't let it block the
+    // manual address flow.
+    let data = null;
+    try {
+      const tab = await getActiveTab();
+      data = await runInTab(tab, "collect.js");
+    } catch (_) { /* page may not be injectable */ }
+
     if (data) {
       const merged = { ...readForm(), ...cleanEmpty(data) };
       writeForm(merged);
