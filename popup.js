@@ -62,6 +62,29 @@ function parsedAddressString() {
   return parts.join(", ");
 }
 
+/* Parse a raw address string into { address, city, state, zip }.
+   Handles formats like:
+     "123 Main St, Springfield, IL 62704"
+     "15305 N 5325 W Riverside UT 84334"
+     "123 Main St Springfield IL 62704"            */
+function parseAddressString(raw) {
+  const result = {};
+  const stateZip = raw.match(/\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$/i);
+  if (!stateZip) return result;
+  result.state = stateZip[1].toUpperCase();
+  result.zip = stateZip[2];
+  const before = raw.slice(0, stateZip.index).replace(/[,\s]+$/, "").trim();
+  if (!before) return result;
+  const commaIdx = before.lastIndexOf(",");
+  if (commaIdx > 0) {
+    result.address = before.slice(0, commaIdx).trim();
+    result.city = before.slice(commaIdx + 1).trim();
+  } else {
+    result.address = before;
+  }
+  return result;
+}
+
 /* Open a URL in an existing tab matching `matchPattern` if one exists,
    otherwise create a new background tab. */
 async function openOrUpdateTab(url, matchPattern) {
@@ -110,9 +133,18 @@ async function doCollect() {
       await saveForm();
     }
 
-    // Address lookup: manual override wins, otherwise use whatever we
-    // just parsed (or had already).
+    // Manual address overrides BOTH Zillow/Maps AND the form fields
+    // (address, city, state, zip) so autofill uses it too.
     const manual = $("manualAddress").value.trim();
+    if (manual) {
+      const parsed = parseAddressString(manual);
+      if (parsed.address) $("address").value = parsed.address;
+      if (parsed.city) $("city").value = parsed.city;
+      if (parsed.state) $("state").value = parsed.state;
+      if (parsed.zip) $("zip").value = parsed.zip;
+      await saveForm();
+    }
+
     const addressForLookup = manual || parsedAddressString();
     if (addressForLookup) {
       await openLocationTabs(addressForLookup);
