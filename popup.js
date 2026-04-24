@@ -63,24 +63,37 @@ function parsedAddressString() {
 }
 
 /* Parse a raw address string into { address, city, state, zip }.
-   Handles formats like:
+   Handles pasted formats including multi-line:
      "123 Main St, Springfield, IL 62704"
-     "15305 N 5325 W Riverside UT 84334"
-     "123 Main St Springfield IL 62704"            */
+     "15305 N 5325 W\nRiverside, UT 84334"
+     "15305 N 5325 W Riverside UT 84334"           */
 function parseAddressString(raw) {
   const result = {};
-  const stateZip = raw.match(/\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$/i);
-  if (!stateZip) return result;
-  result.state = stateZip[1].toUpperCase();
-  result.zip = stateZip[2];
-  const before = raw.slice(0, stateZip.index).replace(/[,\s]+$/, "").trim();
-  if (!before) return result;
-  const commaIdx = before.lastIndexOf(",");
-  if (commaIdx > 0) {
-    result.address = before.slice(0, commaIdx).trim();
-    result.city = before.slice(commaIdx + 1).trim();
+  // Normalize: turn newlines into commas, collapse whitespace
+  const text = raw
+    .replace(/[\r\n]+/g, ", ")
+    .replace(/\s+/g, " ")
+    .replace(/,\s*,/g, ",")
+    .trim();
+
+  // Find "ST 12345" at the end
+  const szMatch = text.match(/,?\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$/i);
+  if (szMatch) {
+    result.state = szMatch[1].toUpperCase();
+    result.zip = szMatch[2];
+    const before = text.slice(0, szMatch.index).replace(/[,\s]+$/, "").trim();
+    if (before) {
+      const lastComma = before.lastIndexOf(",");
+      if (lastComma > 0) {
+        result.address = before.slice(0, lastComma).trim();
+        result.city = before.slice(lastComma + 1).trim();
+      } else {
+        result.address = before;
+      }
+    }
   } else {
-    result.address = before;
+    // No state+zip found — store the whole thing as address
+    result.address = text;
   }
   return result;
 }

@@ -98,17 +98,9 @@
   const lastInput = findInputByLabel(/last\s*name/i);
   if (lastInput) data.lastName = textOf(lastInput);
 
-  const addrInput = findInputByLabel(/address\s*(line\s*1|1)?|street/i);
-  if (addrInput) data.address = textOf(addrInput);
-
-  const cityInput = findInputByLabel(/city/i);
-  if (cityInput) data.city = textOf(cityInput);
-
-  const stateInput = findInputByLabel(/^state$|\bstate\b/i);
-  if (stateInput) data.state = textOf(stateInput);
-
-  const zipInput = findInputByLabel(/zip|postal/i);
-  if (zipInput) data.zip = textOf(zipInput);
+  // Address fields are handled by the regex approach below (not by
+  // input search) because input search can grab wrong addresses from
+  // form fields belonging to other contacts on the page.
 
   /* ---------- 2. Fallback: parse the visible page text ---------- */
 
