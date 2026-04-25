@@ -62,6 +62,42 @@ function parsedAddressString() {
   return parts.join(", ");
 }
 
+/* Parse a raw address string into { address, city, state, zip }.
+   Handles pasted formats including multi-line:
+     "123 Main St, Springfield, IL 62704"
+     "15305 N 5325 W\nRiverside, UT 84334"
+     "15305 N 5325 W Riverside UT 84334"           */
+function parseAddressString(raw) {
+  const result = {};
+  // Normalize: turn newlines into commas, collapse whitespace
+  const text = raw
+    .replace(/[\r\n]+/g, ", ")
+    .replace(/\s+/g, " ")
+    .replace(/,\s*,/g, ",")
+    .trim();
+
+  // Find "ST 12345" at the end
+  const szMatch = text.match(/,?\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$/i);
+  if (szMatch) {
+    result.state = szMatch[1].toUpperCase();
+    result.zip = szMatch[2];
+    const before = text.slice(0, szMatch.index).replace(/[,\s]+$/, "").trim();
+    if (before) {
+      const lastComma = before.lastIndexOf(",");
+      if (lastComma > 0) {
+        result.address = before.slice(0, lastComma).trim();
+        result.city = before.slice(lastComma + 1).trim();
+      } else {
+        result.address = before;
+      }
+    }
+  } else {
+    // No state+zip found — store the whole thing as address
+    result.address = text;
+  }
+  return result;
+}
+
 /* Open a URL in an existing tab matching `matchPattern` if one exists,
    otherwise create a new background tab. */
 async function openOrUpdateTab(url, matchPattern) {
@@ -102,17 +138,33 @@ async function runInTab(tab, files) {
 async function doCollect() {
   setStatus("Collecting…");
   try {
-    const tab = await getActiveTab();
-    const data = await runInTab(tab, "collect.js");
+    // Try to collect data from the page — this can fail on pages where
+    // the extension can't inject scripts, so don't let it block the
+    // manual address flow.
+    let data = null;
+    try {
+      const tab = await getActiveTab();
+      data = await runInTab(tab, "collect.js");
+    } catch (_) { /* page may not be injectable */ }
+
     if (data) {
       const merged = { ...readForm(), ...cleanEmpty(data) };
       writeForm(merged);
       await saveForm();
     }
 
-    // Address lookup: manual override wins, otherwise use whatever we
-    // just parsed (or had already).
+    // Manual address overrides BOTH Zillow/Maps AND the form fields
+    // (address, city, state, zip) so autofill uses it too.
     const manual = $("manualAddress").value.trim();
+    if (manual) {
+      const parsed = parseAddressString(manual);
+      if (parsed.address) $("address").value = parsed.address;
+      if (parsed.city) $("city").value = parsed.city;
+      if (parsed.state) $("state").value = parsed.state;
+      if (parsed.zip) $("zip").value = parsed.zip;
+      await saveForm();
+    }
+
     const addressForLookup = manual || parsedAddressString();
     if (addressForLookup) {
       await openLocationTabs(addressForLookup);

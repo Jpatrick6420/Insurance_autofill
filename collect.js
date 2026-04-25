@@ -98,17 +98,9 @@
   const lastInput = findInputByLabel(/last\s*name/i);
   if (lastInput) data.lastName = textOf(lastInput);
 
-  const addrInput = findInputByLabel(/address\s*(line\s*1|1)?|street/i);
-  if (addrInput) data.address = textOf(addrInput);
-
-  const cityInput = findInputByLabel(/city/i);
-  if (cityInput) data.city = textOf(cityInput);
-
-  const stateInput = findInputByLabel(/^state$|\bstate\b/i);
-  if (stateInput) data.state = textOf(stateInput);
-
-  const zipInput = findInputByLabel(/zip|postal/i);
-  if (zipInput) data.zip = textOf(zipInput);
+  // Address fields are handled by the regex approach below (not by
+  // input search) because input search can grab wrong addresses from
+  // form fields belonging to other contacts on the page.
 
   /* ---------- 2. Fallback: parse the visible page text ---------- */
 
@@ -195,111 +187,52 @@
     }
   }
 
-  // Address parsing.  Several layouts we have to support:
-  //   (a) Multi-line:    "123 Main St\nSpringfield, IL 62704"
-  //   (b) Inline commas: "123 Main St, Springfield, IL 62704"
-  //   (c) Inline no-commas:        "123 Main St Springfield IL 62704"
-  //   (d) Utah-style grid no-commas:
-  //                      "5610 N 1400 W Saint George UT 84770"
+  // Address parsing: regex approach — find "123 ... ST 12345" nearest the
+  // lead name, then split into street / city / state / zip.
   if (!data.address || !data.city || !data.state || !data.zip) {
-    // Known street-type suffixes (end of the street portion of an address).
+    const DIR = "(?:N|S|E|W|NE|NW|SE|SW)";
     const STREET_SUFFIX =
       "(?:St|Street|Ave|Avenue|Blvd|Boulevard|Rd|Road|Dr|Drive|Ln|Lane|" +
       "Way|Wy|Ct|Court|Pl|Place|Ter|Terrace|Cir|Circle|Pkwy|Parkway|" +
       "Trl|Trail|Hwy|Highway|Route|Rte|Loop|Row|Run|Xing|Crossing|" +
       "Sq|Square|Plz|Plaza|Aly|Alley|Expy|Expressway)";
-    const DIR = "(?:N|S|E|W|NE|NW|SE|SW)";
 
-    // Split a "street+city" string into { street, city } using suffix/grid
-    // heuristics.  Returns null if we can't confidently split.
     function splitStreetCity(text) {
       text = text.replace(/\s+/g, " ").trim().replace(/,+/g, "");
-      // 1. Street that ends in a known suffix (optionally followed by a
-      //    directional).  City is everything after.
       let re = new RegExp(
-        "^(\\d+\\s+.*?\\b" + STREET_SUFFIX + "\\.?(?:\\s+" + DIR + "\\b)?)\\s+(.+)$",
-        "i"
+        "^(\\d+\\s+.*?\\b" + STREET_SUFFIX + "\\.?(?:\\s+" + DIR + "\\b)?)\\s+(.+)$", "i"
       );
       let m = text.match(re);
       if (m) return { street: m[1].trim(), city: m[2].trim() };
-      // 2. Utah-style grid: "5610 N 1400 W <city>" — street ends with a
-      //    directional letter following a number.
       re = new RegExp(
-        "^(\\d+\\s+" + DIR + "\\s+\\d+\\s+" + DIR + ")\\s+(.+)$",
-        "i"
+        "^(\\d+\\s+" + DIR + "\\s+\\d+\\s+" + DIR + ")\\s+(.+)$", "i"
       );
       m = text.match(re);
       if (m) return { street: m[1].trim(), city: m[2].trim() };
-      // 3. Simpler grid: "123 N 456 <city>" or "123 <Dir> <City>".
       re = new RegExp("^(\\d+\\s+" + DIR + "\\s+\\d+)\\s+(.+)$", "i");
       m = text.match(re);
       if (m) return { street: m[1].trim(), city: m[2].trim() };
-      // 4. Last-ditch: take "<number> <1-3 tokens>" as street, rest as city.
       m = text.match(/^(\d+\s+\S+(?:\s+\S+){0,2})\s+(.+)$/);
       if (m) return { street: m[1].trim(), city: m[2].trim() };
       return null;
     }
 
-    // Find a line (or the whole pageText) containing "ST 12345" and use it.
-    const STATE_ZIP = /\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/;
-    const candidates = lines.filter((l) => STATE_ZIP.test(l));
-
-    // The page may contain addresses for OTHER contacts (agent info,
-    // previous leads, etc.).  Prefer the one closest to the lead name
-    // we already found — on the lead card the name and address are
-    // adjacent, so proximity in the text is a reliable signal.
-    const nameStr = [data.firstName, data.lastName].filter(Boolean).join(" ");
-    if (nameStr && candidates.length > 1) {
-      const nameLower = nameStr.toLowerCase();
-      const nameLineIdx = lines.findIndex(
-        (l) => l.toLowerCase().includes(nameLower)
-      );
-      if (nameLineIdx >= 0) {
-        candidates.sort((a, b) => {
-          const aIdx = lines.indexOf(a);
-          const bIdx = lines.indexOf(b);
-          return Math.abs(aIdx - nameLineIdx) - Math.abs(bIdx - nameLineIdx);
-        });
-      }
-    }
-
-    // Also consider the raw pageText so we catch addresses not line-broken
-    // the way we expect.
-    if (!candidates.some((c) => c === pageText)) candidates.push(pageText);
-
-    for (const line of candidates) {
-      const szMatch = line.match(STATE_ZIP);
-      if (!szMatch) continue;
-      // Everything before "ST ZIP" on this same line is street+city.
-      const before = line.slice(0, szMatch.index).replace(/[,\s]+$/, "").trim();
-      if (!before) continue;
-
-      // Case (a): "before" is just "City" (street is on the previous line).
-      if (/^[A-Za-z][A-Za-z.\s'-]*$/.test(before)) {
-        if (!data.city) data.city = before.replace(/,$/, "").trim();
-        if (!data.state) data.state = szMatch[1];
-        if (!data.zip) data.zip = szMatch[2];
-        if (!data.address) {
-          const idx = lines.indexOf(line);
-          for (let j = idx - 1; j >= 0 && j >= idx - 3; j--) {
-            if (/^\d+\s+\S/.test(lines[j])) {
-              data.address = lines[j].replace(/[,\s]+$/, "");
-              break;
-            }
-          }
-        }
-        break;
-      }
-
-      // Case (b/c/d): "before" contains both street and city.
-      if (/^\d/.test(before)) {
+    const addrRe = /\d+\s+.+?\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?/g;
+    const m = closestMatch(addrRe, pageText, nameAnchor);
+    if (m) {
+      if (!data.state) data.state = m[1];
+      if (!data.zip) data.zip = m[2];
+      const before = m[0]
+        .replace(/\s+[A-Z]{2}\s+\d{5}(?:-\d{4})?$/, "")
+        .replace(/[,\s]+$/, "")
+        .trim();
+      if (before && (!data.address || !data.city)) {
         const split = splitStreetCity(before);
         if (split) {
           if (!data.address) data.address = split.street;
           if (!data.city) data.city = split.city;
-          if (!data.state) data.state = szMatch[1];
-          if (!data.zip) data.zip = szMatch[2];
-          break;
+        } else if (!data.address) {
+          data.address = before;
         }
       }
     }
