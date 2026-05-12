@@ -202,11 +202,15 @@ async function openAssessor() {
     setStatus("No assessor mapped for ZIP " + zip, "err");
     return;
   }
+  const addr = $("address").value.trim();
+  if (addr) {
+    await navigator.clipboard.writeText(addr);
+  }
   // Try to reuse the existing assessor tab
   if (assessorTabId !== null) {
     try {
       await chrome.tabs.update(assessorTabId, { url: county.url, active: false });
-      setStatus("Opened assessor for ZIP " + zip, "ok");
+      setStatus("Opened assessor for ZIP " + zip + (addr ? " — address copied" : ""), "ok");
       return;
     } catch (_) {
       assessorTabId = null;
@@ -214,7 +218,7 @@ async function openAssessor() {
   }
   const tab = await chrome.tabs.create({ url: county.url, active: false });
   assessorTabId = tab.id;
-  setStatus("Opened assessor for ZIP " + zip, "ok");
+  setStatus("Opened assessor for ZIP " + zip + (addr ? " — address copied" : ""), "ok");
 }
 
 async function getActiveTab() {
