@@ -187,7 +187,10 @@ async function openLocationTabs(address) {
   await openOrUpdateTab(GMAPS_URL + q, GMAPS_MATCH);
 }
 
-/* Open the county assessor site for the current ZIP code. */
+/* Open the county assessor site for the current ZIP code.
+   Always reuses the same tab regardless of which county was last shown. */
+let assessorTabId = null;
+
 async function openAssessor() {
   const zip = $("zip").value.trim();
   if (!zip) {
@@ -199,7 +202,18 @@ async function openAssessor() {
     setStatus("No assessor mapped for ZIP " + zip, "err");
     return;
   }
-  await openOrUpdateTab(county.url, county.match);
+  // Try to reuse the existing assessor tab
+  if (assessorTabId !== null) {
+    try {
+      await chrome.tabs.update(assessorTabId, { url: county.url, active: false });
+      setStatus("Opened assessor for ZIP " + zip, "ok");
+      return;
+    } catch (_) {
+      assessorTabId = null;
+    }
+  }
+  const tab = await chrome.tabs.create({ url: county.url, active: false });
+  assessorTabId = tab.id;
   setStatus("Opened assessor for ZIP " + zip, "ok");
 }
 
