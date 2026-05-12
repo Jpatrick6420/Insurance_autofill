@@ -217,7 +217,7 @@
       return null;
     }
 
-    const addrRe = /\d+\s+.+?\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?/g;
+    const addrRe = /\d+\s+.+?\s+(UT|ID)\s+(\d{5})(?:-\d{4})?/g;
     const m = closestMatch(addrRe, pageText, nameAnchor);
     if (m) {
       if (!data.state) data.state = m[1];
