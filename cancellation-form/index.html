@@ -70,11 +70,23 @@
   </div>
 
   <fieldset>
-    <legend>Policy Number(s)</legend>
-    <div class="policy-row"><span>1</span><input type="text" id="policy1" autocomplete="off" /></div>
-    <div class="policy-row"><span>2</span><input type="text" id="policy2" autocomplete="off" /></div>
-    <div class="policy-row"><span>3</span><input type="text" id="policy3" autocomplete="off" /></div>
-    <div class="policy-row"><span>4</span><input type="text" id="policy4" autocomplete="off" /></div>
+    <legend>Policy Number(s) — fill any that apply</legend>
+    <div class="field">
+      <label for="policyHome">Home Policy Number</label>
+      <input type="text" id="policyHome" placeholder="e.g. 801636642" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label for="policyAuto">Auto Policy Number</label>
+      <input type="text" id="policyAuto" placeholder="e.g. 12332322" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label for="policyUmbrella">Umbrella Policy Number</label>
+      <input type="text" id="policyUmbrella" placeholder="e.g. 998877" autocomplete="off" />
+    </div>
+    <div class="field" style="margin-bottom:0;">
+      <label for="policyOther">Other policy (type the full line)</label>
+      <input type="text" id="policyOther" placeholder='e.g. "Boat# 12332322"' autocomplete="off" />
+    </div>
   </fieldset>
 
   <div class="field">
@@ -151,15 +163,24 @@
       var font = await pdfDoc.embedFont(StandardFonts.Helvetica);
       var black = rgb(0, 0, 0);
 
+      // Build the policy lines: label the typed numbers by type, keep "Other"
+      // as a free-form line, and stack only the ones filled in onto the four
+      // available lines (no blank gaps).
+      var policyLines = [];
+      if (val("policyHome"))     policyLines.push("Home# " + val("policyHome"));
+      if (val("policyAuto"))     policyLines.push("Auto# " + val("policyAuto"));
+      if (val("policyUmbrella")) policyLines.push("Umbrella# " + val("policyUmbrella"));
+      if (val("policyOther"))    policyLines.push(val("policyOther"));
+
       var values = {
         date:       val("date"),
         name:       val("name"),
         address:    val("address"),
         company:    val("company"),
-        policy1:    val("policy1"),
-        policy2:    val("policy2"),
-        policy3:    val("policy3"),
-        policy4:    val("policy4"),
+        policy1:    policyLines[0] || "",
+        policy2:    policyLines[1] || "",
+        policy3:    policyLines[2] || "",
+        policy4:    policyLines[3] || "",
         cancelDate: val("cancelDate")
       };
 
