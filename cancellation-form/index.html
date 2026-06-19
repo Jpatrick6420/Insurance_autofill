@@ -217,6 +217,16 @@
   }
 
   document.getElementById("generate").addEventListener("click", generate);
+
+  // Default the letter's top Date to today's date (mm/dd/yyyy), still editable.
+  (function prefillToday() {
+    var el = document.getElementById("date");
+    if (!el || el.value) return;
+    var d = new Date();
+    var mm = ("0" + (d.getMonth() + 1)).slice(-2);
+    var dd = ("0" + d.getDate()).slice(-2);
+    el.value = mm + "/" + dd + "/" + d.getFullYear();
+  })();
 })();
 </script>
 </body>
